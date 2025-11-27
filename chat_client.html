@@ -1,0 +1,586 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-Time Multiplayer Chat (WebSockets)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Socket.IO Client Library (Necessary for WebSocket communication) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.5.4/socket.io.min.js"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #1f2937; /* Dark background */
+            color: #f3f4f6;
+        }
+        .chat-container {
+            background-color: #374151; /* Dark gray container */
+            border-radius: 1rem;
+            box-shadow: 0 10px 15px rgba(0, 0, 0, 0.3);
+            max-height: 90vh; 
+            display: flex; /* Flex layout for chat and user list */
+        }
+        #chat-main {
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
+            padding: 1rem;
+        }
+        #user-list {
+            width: 200px;
+            min-width: 200px;
+            background-color: #111827;
+            padding: 1rem;
+            border-top-right-radius: 1rem;
+            border-bottom-right-radius: 1rem;
+            border-left: 1px solid #374151;
+            overflow-y: auto;
+        }
+        #chat-window {
+            flex-grow: 1;
+            overflow-y: auto;
+            background-color: #111827;
+            padding: 1rem;
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+        #chat-window::-webkit-scrollbar {
+            display: none;
+        }
+        .message-bubble {
+            margin-bottom: 0.75rem;
+            max-width: 75%;
+            filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.2));
+            animation: fadeIn 0.3s ease-out;
+            transition: all 0.3s ease;
+        }
+        .my-message-container {
+            display: flex;
+            justify-content: flex-end;
+            margin-bottom: 10px;
+        }
+        .my-message {
+            background-color: #3b82f6;
+            color: white;
+            border-radius: 0.75rem 0.75rem 0 0.75rem;
+            padding: 0.5rem 1rem;
+        }
+        .other-message {
+            background-color: #4b5563;
+            color: #f9fafb;
+            border-radius: 0.75rem 0.75rem 0.75rem 0;
+            padding: 0.5rem 1rem;
+        }
+        .timestamp {
+            font-size: 0.7rem;
+            display: block;
+            margin-top: 3px;
+            color: #9ca3af;
+            text-align: right;
+        }
+        .status-message {
+            color: #6b7280;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(5px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        /* Modal Styles */
+        #connect-modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.8);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 200;
+        }
+        .modal-content {
+            background-color: #374151;
+            padding: 2rem;
+            border-radius: 1rem;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+            width: 90%;
+            max-width: 400px;
+            transition: transform 0.3s ease-out;
+        }
+        /* Typing Indicator Animation (New Feature) */
+        .typing-dot {
+            animation: pulse 1s infinite;
+        }
+        .typing-dot:nth-child(2) {
+            animation-delay: 0.2s;
+        }
+        .typing-dot:nth-child(3) {
+            animation-delay: 0.4s;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 0.2; }
+            50% { opacity: 1; }
+        }
+        /* User Status Tooltip (New Feature) */
+        .user-item-container {
+            position: relative;
+        }
+        .user-tooltip {
+            visibility: hidden;
+            width: 120px;
+            background-color: #111827;
+            color: #fff;
+            text-align: center;
+            border-radius: 6px;
+            padding: 5px 0;
+            position: absolute;
+            z-index: 1;
+            bottom: 100%; 
+            left: 100%; 
+            margin-left: 5px;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+        .user-item-container:hover .user-tooltip {
+            visibility: visible;
+            opacity: 1;
+        }
+        
+    </style>
+</head>
+<body class="p-4 sm:p-8 flex justify-center">
+
+    <!-- Connection Modal -->
+    <div id="connect-modal">
+        <div class="modal-content">
+            <h2 class="text-2xl font-bold text-white mb-4">Enter Chatroom</h2>
+            <input type="text" id="modal-username" placeholder="Choose a username" class="w-full p-3 bg-gray-800 border border-gray-600 text-white rounded-md focus:ring-blue-500 focus:border-blue-500 mb-4" value="User_A">
+            <button id="modal-connect-button" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 rounded-lg transition duration-200 shadow-lg">
+                Join Chat
+            </button>
+            <p id="modal-status" class="mt-4 text-sm text-red-400 hidden">Error: Could not reach server.</p>
+        </div>
+    </div>
+
+
+    <div class="w-full max-w-4xl chat-container">
+        
+        <!-- Main Chat Area (Left/Top) -->
+        <div id="chat-main">
+            <header class="text-center mb-4 border-b border-gray-600 pb-3">
+                <h1 class="text-3xl font-extrabold text-white">Multiplayer Chat (WebSockets)</h1>
+                <p class="text-gray-400 text-sm">Low-latency communication powered by Socket.IO.</p>
+            </header>
+
+            <!-- Status Bar -->
+            <div class="flex justify-between items-center p-3 mb-4 bg-gray-700 rounded-lg shadow-inner">
+                 <p id="status-display" class="text-sm font-medium text-red-400">
+                    DISCONNECTED. Please start the Python backend first.
+                </p>
+                <div class="space-x-2">
+                    <button id="disconnect-button" class="bg-red-600 hover:bg-red-700 text-white font-bold py-1 px-3 rounded-md transition duration-200 shadow-md">
+                        Leave
+                    </button>
+                </div>
+            </div>
+
+            <!-- Chat Window -->
+            <div id="chat-window" class="relative">
+                <!-- Messages will be injected here -->
+                <p class="text-center text-gray-500 italic text-sm py-4">Chat history starts here. Connect to begin messaging.</p>
+                
+                <!-- Scroll to Bottom Button -->
+                <button id="scroll-to-bottom" class="absolute bottom-4 right-4 bg-blue-500 text-white p-3 rounded-full shadow-lg hover:bg-blue-600 transition duration-300 hidden">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-arrow-down"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></svg>
+                </button>
+            </div>
+
+            <!-- Typing Indicator (New Feature) -->
+            <div id="typing-indicator" class="h-6 text-sm italic text-gray-400 pl-2 mt-2">
+                <!-- User is typing... -->
+            </div>
+
+            <!-- Message Input -->
+            <div class="flex space-x-3 mt-4">
+                <input type="text" id="message-input" placeholder="Type a message..." class="flex-1 p-3 bg-gray-800 border border-gray-600 text-white rounded-lg focus:ring-blue-500 focus:border-blue-500" disabled>
+                <button id="send-button" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg transition duration-200" disabled>
+                    Send
+                </button>
+            </div>
+        </div>
+        
+        <!-- User List Sidebar (Right/Bottom) -->
+        <div id="user-list">
+            <h2 class="text-lg font-semibold text-white mb-4">Active Users</h2>
+            <ul id="user-list-ul" class="space-y-2">
+                <li class="text-sm text-gray-400 italic">No users connected.</li>
+            </ul>
+        </div>
+        
+    </div>
+    
+    <!-- Original Instructions (Kept outside main container for debugging) -->
+    <div class="mt-8 p-4 bg-gray-800 rounded-lg border border-gray-600 w-full max-w-2xl hidden">
+        <h2 class="text-lg font-semibold text-gray-300 mb-2">Backend Setup (Python Server Required)</h2>
+        <p class="text-sm text-gray-400">
+            To enable real-time chat, you must run the accompanying Python server.
+            The client attempts to connect to: <code>http://127.0.0.1:5000</code>
+        </p>
+        <h3 class="font-medium text-gray-300 mt-3 mb-1">1. Setup Environment:</h3>
+        <p class="text-xs font-mono bg-gray-700 text-green-300 p-2 rounded">
+            pip install Flask Flask-SocketIO
+        </p>
+        <h3 class="font-medium text-gray-300 mt-3 mb-1">2. Server Code (`server.py`):</h3>
+        <pre class="bg-black text-green-400 p-3 rounded-md text-xs overflow-x-auto">
+from flask import Flask, render_template
+from flask_socketio import SocketIO, emit, join_room
+
+app = Flask(__name__)
+# IMPORTANT: Increase logging level to avoid spamming the console
+app.config['SECRET_KEY'] = 'a_secure_secret_key' 
+socketio = SocketIO(app, cors_allowed_origins="*")
+
+# In a real app, you would use a user ID, not the username, for security
+USERS = {} 
+ROOM = "global_chat" 
+
+@socketio.on('connect')
+def handle_connect():
+    # Client will emit 'join' immediately after this
+    pass
+
+@socketio.on('join')
+def handle_join(data):
+    username = data.get('username', 'Anonymous')
+    USERS[request.sid] = username
+    join_room(ROOM)
+    
+    # Notify everyone else that a user joined
+    emit('status', {'msg': f'{username} has joined the chat.'}, room=ROOM, skip_sid=request.sid)
+    print(f"User {username} joined.")
+
+@socketio.on('message')
+def handle_message(data):
+    # Ensure data has required fields
+    username = data.get('username', 'Unknown')
+    message = data.get('message', '')
+    
+    if message:
+        # Broadcast the message to all users in the room
+        # We now send the server time for accurate display
+        emit('new_message', {'username': username, 'message': message, 'timestamp': time.time() * 1000}, room=ROOM)
+        print(f"[{username}]: {message}")
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    username = USERS.pop(request.sid, 'Anonymous')
+    
+    # Notify room that the user left
+    emit('status', {'msg': f'{username} has left the chat.'}, room=ROOM)
+    print(f"User {username} disconnected.")
+
+# Mock endpoint for typing (client would emit this)
+@socketio.on('typing')
+def handle_typing(data):
+    # Broadcast to all others in the room
+    emit('typing', {'username': data['username']}, room=ROOM, skip_sid=request.sid)
+
+if __name__ == '__main__':
+    import time
+    from flask import request
+    socketio.run(app, port=5000, debug=False)
+        </pre>
+        <h3 class="font-medium text-gray-300 mt-3 mb-1">3. Run Server:</h3>
+        <p class="text-xs font-mono bg-gray-700 text-green-300 p-2 rounded">
+            python server.py
+        </p>
+    </div>
+
+    <script>
+        const connectModal = document.getElementById('connect-modal');
+        const modalUsernameInput = document.getElementById('modal-username');
+        const modalConnectButton = document.getElementById('modal-connect-button');
+        const modalStatus = document.getElementById('modal-status');
+        
+        const disconnectButton = document.getElementById('disconnect-button');
+        const statusDisplay = document.getElementById('status-display');
+        const chatWindow = document.getElementById('chat-window');
+        const messageInput = document.getElementById('message-input');
+        const sendButton = document.getElementById('send-button');
+        const scrollToBottomButton = document.getElementById('scroll-to-bottom');
+        const typingIndicator = document.getElementById('typing-indicator');
+        const userListUl = document.getElementById('user-list-ul');
+
+        let socket = null;
+        const SERVER_URL = 'http://127.0.0.1:5000';
+        let currentUsername = '';
+        let typingTimeout = null; // For throttling typing events
+        let activeUsers = new Map(); // Map to track users: {username: sid}
+
+        // --- UI UTILITIES ---
+
+        function formatTime(timestamp) {
+            if (!timestamp) return '';
+            const date = new Date(timestamp);
+            return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        }
+        
+        function animateModalSuccess() {
+            // Apply success scale and opacity changes to modal content
+            const modalContent = document.querySelector('.modal-content');
+            modalContent.style.transform = 'scale(1.05)';
+            modalContent.style.opacity = '0.5';
+            setTimeout(() => {
+                modalContent.style.transform = 'scale(1)';
+                modalContent.style.opacity = '1';
+                connectModal.style.display = 'none';
+            }, 300);
+        }
+
+        function addMessage(username, message, timestamp, isSelf = false) {
+            const container = document.createElement('div');
+            container.className = isSelf ? 'my-message-container' : 'other-message-container';
+            
+            const bubble = document.createElement('div');
+            bubble.className = `message-bubble ${isSelf ? 'my-message' : 'other-message'} p-3`;
+            
+            const content = document.createElement('p');
+            content.className = 'message-content break-words';
+            content.textContent = message;
+
+            const timeTag = document.createElement('span');
+            timeTag.className = 'timestamp ' + (isSelf ? 'text-blue-200' : 'text-gray-400');
+            timeTag.textContent = formatTime(timestamp);
+
+            if (!isSelf) {
+                 const userTag = document.createElement('p');
+                 userTag.className = 'font-semibold text-sm mb-1';
+                 userTag.textContent = username;
+                 bubble.appendChild(userTag);
+            }
+            
+            bubble.appendChild(content);
+            bubble.appendChild(timeTag);
+            
+            container.appendChild(bubble);
+            chatWindow.appendChild(container);
+            
+            // Scroll to bottom if user is close to the bottom
+            if (chatWindow.scrollHeight - chatWindow.scrollTop < chatWindow.clientHeight + 200) {
+                scrollToBottom();
+            }
+        }
+
+        function addStatus(message) {
+            const status = document.createElement('p');
+            status.className = 'text-center status-message italic text-xs mb-2 p-2 rounded';
+            status.textContent = message;
+            chatWindow.appendChild(status);
+            scrollToBottom();
+        }
+
+        function setUIConnected(isConnected) {
+            // We handle modal visibility inside connect/disconnect functions
+            disconnectButton.classList.toggle('hidden-when-disconnected', !isConnected);
+            messageInput.disabled = !isConnected;
+            sendButton.disabled = !isConnected;
+        }
+
+        function scrollToBottom() {
+            chatWindow.scrollTop = chatWindow.scrollHeight;
+        }
+
+        function updateActiveUsers(username, action, sid = null) {
+            if (action === 'add') {
+                activeUsers.set(username, sid || 'mock-sid');
+            } else if (action === 'remove' && activeUsers.has(username)) {
+                activeUsers.delete(username);
+            }
+            
+            userListUl.innerHTML = '';
+            
+            if (activeUsers.size === 0) {
+                 userListUl.innerHTML = '<li class="text-sm text-gray-400 italic">No users connected.</li>';
+                 return;
+            }
+
+            activeUsers.forEach((sid, user) => {
+                const li = document.createElement('li');
+                li.className = 'flex items-center space-x-2 text-white cursor-default user-item-container';
+                const statusDot = `<span class="h-2 w-2 bg-green-500 rounded-full"></span>`;
+                li.innerHTML = statusDot + `<span>${user} ${user === currentUsername ? '(You)' : ''}</span>`;
+                
+                // Add tooltip for mock SID
+                const tooltip = document.createElement('div');
+                tooltip.className = 'user-tooltip';
+                tooltip.textContent = `ID: ${sid.substring(0, 8)}...`;
+                li.appendChild(tooltip);
+
+                userListUl.appendChild(li);
+            });
+        }
+        
+        // --- SOCKET LOGIC ---
+
+        function connect(username) {
+            if (!username) {
+                modalStatus.textContent = "Please enter a username.";
+                modalStatus.classList.remove('hidden');
+                return;
+            }
+            currentUsername = username;
+            
+            try {
+                // Initialize socket connection
+                socket = io(SERVER_URL, { 
+                    transports: ['websocket'], 
+                    reconnection: false 
+                });
+
+                // 1. Connection Handlers
+                socket.on('connect', () => {
+                    modalStatus.classList.add('hidden');
+                    statusDisplay.textContent = `CONNECTED as ${username}`;
+                    statusDisplay.className = 'text-sm font-medium text-green-400';
+                    setUIConnected(true);
+                    animateModalSuccess(); // Animate out the modal
+                    
+                    socket.emit('join', { username: username });
+                    updateActiveUsers(username, 'add', socket.id); // Add self to list with real SID
+                });
+
+                socket.on('connect_error', (error) => {
+                    modalStatus.textContent = `CONNECTION ERROR: Could not reach server. Is server running?`;
+                    modalStatus.classList.remove('hidden');
+                    statusDisplay.textContent = `DISCONNECTED.`;
+                    statusDisplay.className = 'text-sm font-medium text-red-400';
+                });
+
+                socket.on('disconnect', () => {
+                    statusDisplay.textContent = `DISCONNECTED.`;
+                    statusDisplay.className = 'text-sm font-medium text-red-400';
+                    setUIConnected(false);
+                    // Clear user list on disconnect
+                    activeUsers.clear();
+                    updateActiveUsers(); 
+                    connectModal.style.display = 'flex'; // Show modal again
+                });
+
+                // 2. Message Handlers
+                socket.on('new_message', (data) => {
+                    const isSelf = data.username === currentUsername;
+                    addMessage(data.username, data.message, data.timestamp, isSelf);
+                    // Clear typing indicator if the user was typing
+                    if (!isSelf) typingIndicator.textContent = '';
+                });
+                
+                socket.on('status', (data) => {
+                    addStatus(data.msg);
+                    
+                    // Logic to update active user list based on status message
+                    const usernameMatch = data.msg.match(/(\w+) has (joined|left) the chat\./);
+                    if (usernameMatch) {
+                        const user = usernameMatch[1];
+                        const action = usernameMatch[2] === 'joined' ? 'add' : 'remove';
+                        if (user !== currentUsername) {
+                            updateActiveUsers(user, action, 'mock-' + user); // Mock SID for others
+                        }
+                    }
+                });
+                
+                // 3. Typing Handler (Server response)
+                socket.on('typing', (data) => {
+                   if (data.username !== currentUsername) {
+                       // Animated typing indicator
+                       typingIndicator.innerHTML = `
+                           ${data.username} is typing
+                           <span class="typing-dot">.</span>
+                           <span class="typing-dot">.</span>
+                           <span class="typing-dot">.</span>
+                       `;
+                       // Clear indicator after a short delay
+                       if (typingTimeout) clearTimeout(typingTimeout);
+                       typingTimeout = setTimeout(() => typingIndicator.textContent = '', 2000);
+                   }
+                });
+
+
+            } catch (error) {
+                modalStatus.textContent = `CLIENT ERROR: ${error.message}`;
+                modalStatus.classList.remove('hidden');
+                console.error("Client initialization error:", error);
+            }
+        }
+        
+        function sendMessage() {
+            if (!socket || !socket.connected) return;
+            
+            const message = messageInput.value.trim();
+            
+            if (message) {
+                socket.emit('message', { username: currentUsername, message: message });
+                messageInput.value = ''; 
+                // Stop typing immediately after sending message
+                if (typingTimeout) clearTimeout(typingTimeout); 
+                typingTimeout = null;
+            }
+        }
+
+        function disconnect() {
+            if (socket) {
+                // Remove self from the list before disconnecting
+                updateActiveUsers(currentUsername, 'remove');
+                currentUsername = '';
+                socket.disconnect();
+                socket = null;
+                setUIConnected(false);
+                connectModal.style.display = 'flex';
+                modalStatus.classList.add('hidden');
+            }
+        }
+
+        // --- INTERACTIVITY LOGIC ---
+
+        function emitTyping() {
+            // Throttling: only emit the typing signal every 500ms
+            if (!typingTimeout && socket && socket.connected) {
+                // Emit event to the server
+                socket.emit('typing', { username: currentUsername });
+                typingTimeout = setTimeout(() => typingTimeout = null, 500);
+            }
+        }
+
+        // --- EVENT LISTENERS ---
+        modalConnectButton.addEventListener('click', () => connect(modalUsernameInput.value.trim()));
+        modalUsernameInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                connect(modalUsernameInput.value.trim());
+            }
+        });
+        
+        disconnectButton.addEventListener('click', disconnect);
+        sendButton.addEventListener('click', sendMessage);
+        
+        messageInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                sendMessage();
+                e.preventDefault();
+            } else if (socket && socket.connected && messageInput.value.trim().length > 0) {
+                emitTyping();
+            }
+        });
+
+        // Scroll button visibility control
+        chatWindow.addEventListener('scroll', () => {
+            const isScrolledUp = chatWindow.scrollHeight - chatWindow.scrollTop > chatWindow.clientHeight + 100;
+            scrollToBottomButton.classList.toggle('hidden', !isScrolledUp);
+        });
+
+        scrollToBottomButton.addEventListener('click', scrollToBottom);
+        
+        // Initial setup
+        // Show modal on load
+        connectModal.style.display = 'flex';
+    </script>
+</body>
+</html>
