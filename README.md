@@ -1,6 +1,8 @@
-# Real-Time-Network-Programming-using-WebSockets
+# Real-Time-Network-Programming-using-WebSockets 🗣️
 This project showcases your ability to design and implement low-latency, bi-directional communication systems, which is critical for gaming, finance, and collaborative tools
-Real-Time Multiplayer Chat Service (WebSockets) 🗣️
+Real-Time Multiplayer Chat Service (WebSockets) 
+
+<img width="373" height="353" alt="image" src="https://github.com/user-attachments/assets/369edf50-f397-42da-ae24-da15cfd1cf55" />
 
 Overview and Project Goal
 
